@@ -14,11 +14,10 @@
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import Grass from './grass.js';
-    
-
+    import Foliage from './Foliage.js';
     // --- 1. THE WORLD SETUP ---
     const scene = new THREE.Scene();
-    const bgColor = new THREE.Color('#ff9d4d');
+    const bgColor = new THREE.Color('#bdaa9d');
     scene.background = bgColor;
     // Mist hides the pointy ends of the plane
     scene.fog = new THREE.Fog(bgColor, 10, 60); 
@@ -41,7 +40,7 @@
     // --- 4. THE MAGIC GROUND (SHADER) ---
     const groundShader = {
         uniforms: {
-            uColorCenter: { value: new THREE.Color('#ffcc80') },
+            uColorCenter: { value: new THREE.Color('#b07d54') },
             uColorEdge: { value: bgColor }
         },
         vertexShader: `
@@ -64,25 +63,46 @@
     const grassField = new Grass(scene, 1600, 10);
     // --- 5. LOADING & ANIMATION ---
     let targetRotation = 0; 
-    let mixer, walkAction, idleAction, character;
+    let mixer, walkAction, idleAction,runAction, character;
     const clock = new THREE.Clock();
     const loader = new GLTFLoader();
 
-    // Load Trees
-    loader.load('tree1.glb', (gltf) => {
-        const treeModel = gltf.scene;
-        for(let i = 0; i < 30; i++) {
-            const tree = treeModel.clone();
-            tree.position.set((Math.random() - 0.5) * 100, 0, (Math.random() - 0.5) * 100);
-            const s = 3 + Math.random() * 3;
-            tree.scale.set(s, s, s);
-            tree.rotation.y = Math.random() * Math.PI * 2;
-            scene.add(tree);
-        }
-    });
+    // --- NEW HANDSHAKE LOADING ---
+    let bushField;
+    const treeTrunks = []; // We will save the tree locations here
+    const texLoader = new THREE.TextureLoader();
 
+    // 1. Load the leaf images first
+    texLoader.load('leaf.png', (leafTex) => {
+        texLoader.load('matcap.png', (matcapTex) => {
+            matcapTex.colorSpace = THREE.SRGBColorSpace; 
+            
+            // 2. NOW load the Blender Trunks
+            loader.load('tree2.glb', (gltf) => {
+                const treeModel = gltf.scene;
+                
+                for(let i = 0; i < 30; i++) {
+                    const tree = treeModel.clone();
+                    const randomX = (Math.random() - 0.5) * 100;
+                    const randomZ = (Math.random() - 0.5) * 100;
+                    const s = 3 + Math.random() * 3; // Random Scale
+                    
+                    tree.position.set(randomX, 0, randomZ);
+                    tree.scale.set(s, s, s);
+                    tree.rotation.y = Math.random() * Math.PI * 2;
+                    scene.add(tree);
+
+                    // 3. SAVE THE TRUNK DATA!
+                    treeTrunks.push({ x: randomX, z: randomZ, scale: s });
+                }
+
+                // 4. Give the saved data to the Foliage Maker
+                bushField = new Foliage(scene, treeTrunks, leafTex, matcapTex);
+            });
+        });
+    });
     // Load Character
-    loader.load('Man+anim2.glb', (gltf) => {
+    loader.load('Man+anim3.glb', (gltf) => {
         character = gltf.scene;
         scene.add(character);
 
@@ -91,23 +111,35 @@
         // Find your NLA strips from Blender
         const walkClip = THREE.AnimationClip.findByName(gltf.animations, 'Man_Walk');
         const idleClip = THREE.AnimationClip.findByName(gltf.animations, 'Man_Idle');
+        const runClip = THREE.AnimationClip.findByName(gltf.animations, 'Man_Run'); // <-- Find Run clip
 
         if (walkClip) {
             walkAction = mixer.clipAction(walkClip);
-            walkAction.setLoop(THREE.LoopRepeat); // FIXED: Force Loop
+            walkAction.setLoop(THREE.LoopRepeat); 
+        }
+        if (runClip) { // <-- Setup Run Action
+            runAction = mixer.clipAction(runClip);
+            runAction.setLoop(THREE.LoopRepeat); 
         }
         if (idleClip) {
             idleAction = mixer.clipAction(idleClip);
-            idleAction.setLoop(THREE.LoopRepeat); // FIXED: Force Loop
+            idleAction.setLoop(THREE.LoopRepeat); 
             idleAction.play();
         }
     });
 
     // --- 6. INPUTS ---
-    const keys = { w: false, a: false, s: false, d: false };
-    window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; });
-    window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
-
+    const keys = { w: false, a: false, s: false, d: false, shift: false }; // Added shift
+    
+    window.addEventListener('keydown', (e) => { 
+        if(e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = true; 
+        if(e.key === 'Shift') keys.shift = true; // Track Shift
+    });
+    
+    window.addEventListener('keyup', (e) => { 
+        if(e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = false; 
+        if(e.key === 'Shift') keys.shift = false; // Untrack Shift
+    });
     // --- 7. RENDERER ---
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -118,10 +150,14 @@
     function animate() {
         requestAnimationFrame(animate);
         const delta = clock.getDelta();
+        const time = clock.getElapsedTime();
         grassField.update(clock.getElapsedTime());
+        if (bushField) bushField.update(time);
         if (character && mixer) {
             let isMoving = keys.w || keys.a || keys.s || keys.d;
-            const speed = 0.15;
+            let isRunning = isMoving && keys.shift; // Are we moving AND holding shift?
+            
+            const speed = isRunning ? 0.3 : 0.15; // Double the speed if running!
 
             // 1. UPDATE TARGET ROTATION & MOVEMENT
             if (isMoving) {
@@ -136,16 +172,26 @@
                 if (keys.s && keys.d) targetRotation = Math.PI * 0.25;
                 if (keys.s && keys.a) targetRotation = -Math.PI * 0.25;
 
-                // Play Walk Animation
-                if (walkAction && !walkAction.isRunning()) {
-                    if (idleAction) idleAction.fadeOut(0.2);
-                    walkAction.reset().fadeIn(0.2).play();
+                // --- NEW ANIMATION SWITCHING ---
+                if (isRunning) {
+                    if (runAction && !runAction.isRunning()) {
+                        if (walkAction) walkAction.fadeOut(0.2);
+                        if (idleAction) idleAction.fadeOut(0.2);
+                        runAction.reset().fadeIn(0.2).play();
+                    }
+                } else {
+                    if (walkAction && !walkAction.isRunning()) {
+                        if (runAction) runAction.fadeOut(0.2);
+                        if (idleAction) idleAction.fadeOut(0.2);
+                        walkAction.reset().fadeIn(0.2).play();
+                    }
                 }
             } 
             // 2. IF NOT MOVING
             else {
                 if (idleAction && !idleAction.isRunning()) {
                     if (walkAction) walkAction.fadeOut(0.2);
+                    if (runAction) runAction.fadeOut(0.2);
                     idleAction.reset().fadeIn(0.2).play();
                 }
             }
@@ -156,6 +202,7 @@
                 targetRotation, 
                 0.1 
             );
+            
             // 4. UPDATE PHYSICS & CAMERA
             mixer.update(delta);
 
