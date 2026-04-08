@@ -10,15 +10,18 @@
         }
         return start + (end - start) * t;
     }
+    
     import * as THREE from 'three';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import Grass from './grass.js';
+    
 
     // --- 1. THE WORLD SETUP ---
     const scene = new THREE.Scene();
     const bgColor = new THREE.Color('#ff9d4d');
     scene.background = bgColor;
     // Mist hides the pointy ends of the plane
-    scene.fog = new THREE.Fog(bgColor, 30, 70); 
+    scene.fog = new THREE.Fog(bgColor, 10, 60); 
 
     // --- 2. THE CAMERA (FOLLOWING EYE) ---
     const aspect = window.innerWidth / window.innerHeight;
@@ -58,7 +61,7 @@
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), new THREE.ShaderMaterial(groundShader));
     floor.rotation.x = -Math.PI * 0.5;
     scene.add(floor);
-
+    const grassField = new Grass(scene, 1600, 10);
     // --- 5. LOADING & ANIMATION ---
     let targetRotation = 0; 
     let mixer, walkAction, idleAction, character;
@@ -115,7 +118,7 @@
     function animate() {
         requestAnimationFrame(animate);
         const delta = clock.getDelta();
-
+        grassField.update(clock.getElapsedTime());
         if (character && mixer) {
             let isMoving = keys.w || keys.a || keys.s || keys.d;
             const speed = 0.15;
