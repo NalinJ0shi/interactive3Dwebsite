@@ -1,27 +1,21 @@
 import * as THREE from 'three';
 
 export default class Grass {
-    // FIX: Ultra-tiny patch! 12 blades of grass in a 0.5 size box.
-    constructor(scene, count = 12, size = 0.5) {
+    // We now accept the ghost map data!
+    constructor(scene, count = 20000, size = 150, imgData = null, imgSize = 512) {
         this.scene = scene;
         this.count = count;
         this.size = size;
 
-        // 1. CREATE THE "X" SHAPE GEOMETRY
-        // We create one plane, then another rotated 90 degrees
+        // 1. CREATE THE "X" SHAPE GEOMETRY (Unchanged)
         const planeGeom = new THREE.PlaneGeometry(0.25, 0.8, 1, 4);
-        planeGeom.translate(0, 0.4, 0); // Put bottom at 0 height
+        planeGeom.translate(0, 0.4, 0); 
 
-        // Create the cross-section
         const secondPlane = planeGeom.clone();
         secondPlane.rotateY(Math.PI / 2);
 
-        // Combine them into one "X" geometry
-        // Note: Using BufferGeometry.merge to keep it fast
         const geometry = new THREE.BufferGeometry();
         const geometries = [planeGeom, secondPlane];
-        
-        // Manual merge to avoid extra imports for now
         const positions = [];
         const uvs = [];
         geometries.forEach(g => {
@@ -31,36 +25,25 @@ export default class Grass {
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
 
-        // 2. THE MATERIAL (Wind + Color)
+        // 2. THE MATERIAL (Unchanged)
         this.material = new THREE.ShaderMaterial({
             uniforms: {
                 uTime: { value: 0 },
-                uColorLow: { value: new THREE.Color('#3a6e2a') }, // Base color
-                uColorHigh: { value: new THREE.Color('#ffd24d') } // Tips (Yellowish like sunset)
+                uColorLow: { value: new THREE.Color('#3a6e2a') }, 
+                uColorHigh: { value: new THREE.Color('#ffd24d') } 
             },
             vertexShader: `
                 varying vec2 vUv;
                 uniform float uTime;
-
-                // Simple Math Wind
-                float getWind(vec2 p) {
-                    return sin(p.x * 0.5 + uTime * 1.5) * cos(p.y * 0.5 + uTime * 1.2);
-                }
-
+                float getWind(vec2 p) { return sin(p.x * 0.5 + uTime * 1.5) * cos(p.y * 0.5 + uTime * 1.2); }
                 void main() {
                     vUv = uv;
-                    
-                    // The magic: Only top of blade moves (uv.y goes 0 to 1)
                     float strength = pow(uv.y, 2.0); 
-
                     vec3 pos = position;
-                    // Get world position of this specific blade
                     vec3 worldPos = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-                    
                     float wind = getWind(worldPos.xz);
                     pos.x += wind * strength * 0.4;
                     pos.z += wind * strength * 0.3;
-
                     gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(pos, 1.0);
                 }
             `,
@@ -68,9 +51,7 @@ export default class Grass {
                 varying vec2 vUv;
                 uniform vec3 uColorLow;
                 uniform vec3 uColorHigh;
-
                 void main() {
-                    // Vertical gradient mix
                     vec3 col = mix(uColorLow, uColorHigh, vUv.y);
                     gl_FragColor = vec4(col, 1.0);
                 }
@@ -78,25 +59,51 @@ export default class Grass {
             side: THREE.DoubleSide
         });
 
-        // 3. THE INSTANCED MESH (The Performance King)
+        // 3. THE SMART LOOP (Reads the Map!)
         this.mesh = new THREE.InstancedMesh(geometry, this.material, this.count);
-        
         const dummy = new THREE.Object3D();
-        for (let i = 0; i < this.count; i++) {
-            // Place grass around the floor
-            dummy.position.set(
-                (Math.random() - 0.5) * this.size,
-                0,
-                (Math.random() - 0.5) * this.size
-            );
-            
+        
+        let placedGrass = 0;
+        let attempts = 0;
+        const maxAttempts = this.count * 10; // Prevent freezing if map is entirely black
+
+        while (placedGrass < this.count && attempts < maxAttempts) {
+            attempts++;
+
+            // Pick a random spot in the world
+            const randomX = (Math.random() - 0.5) * this.size;
+            const randomZ = (Math.random() - 0.5) * this.size;
+
+            // --- THE MASK CHECK ---
+            if (imgData) {
+                // Convert 3D world position to 2D image pixel
+                const normalizedX = (randomX / this.size) + 0.5;
+                const normalizedZ = (randomZ / this.size) + 0.5;
+
+                const pixelX = Math.floor(normalizedX * imgSize);
+                const pixelY = Math.floor(normalizedZ * imgSize);
+
+                // Find this pixel's brightness in the data array
+                const pixelIndex = (pixelY * imgSize + pixelX) * 4;
+                const brightness = imgData[pixelIndex]; // 0 is black, 255 is white
+
+                // If pixel is mostly black, throw seed in trash and try again!
+                if (brightness < 128) {
+                    continue; 
+                }
+            }
+
+            // If we survived the check (it's white), plant the grass!
+            dummy.position.set(randomX, 0, randomZ);
             dummy.rotation.y = Math.random() * Math.PI;
-            // Randomly make some grass taller than others
             dummy.scale.setScalar(0.6 + Math.random() * 0.8);
             dummy.updateMatrix();
-            this.mesh.setMatrixAt(i, dummy.matrix);
+            this.mesh.setMatrixAt(placedGrass, dummy.matrix);
+            
+            placedGrass++;
         }
 
+        this.mesh.count = placedGrass; // Tell Three.js exactly how many survived
         this.scene.add(this.mesh);
     }
 

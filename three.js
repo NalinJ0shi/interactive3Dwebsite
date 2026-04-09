@@ -15,6 +15,7 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import Grass from './grass.js';
     import Foliage from './Foliage.js';
+    
     // --- 1. THE WORLD SETUP ---
     const scene = new THREE.Scene();
     const bgColor = new THREE.Color('#bdaa9d');
@@ -60,7 +61,25 @@
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), new THREE.ShaderMaterial(groundShader));
     floor.rotation.x = -Math.PI * 0.5;
     scene.add(floor);
-    const grassField = new Grass(scene, 1600, 10);
+    // --- LOAD THE GHOST MAP FOR GRASS ---
+    let grassField; 
+
+    const grassImg = new Image();
+    grassImg.src = 'grass_map.png';
+    grassImg.onload = () => {
+        // Create an invisible canvas to read the image
+        const canvas = document.createElement('canvas');
+        canvas.width = grassImg.width;
+        canvas.height = grassImg.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(grassImg, 0, 0);
+        
+        // Extract the raw pixel data!
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+        // Give the pixels to the Grass! (50,000 blades, 150 size to cover your whole floor)
+        grassField = new Grass(scene, 9000, 90, imgData, canvas.width);
+    };
     // --- 5. LOADING & ANIMATION ---
     let targetRotation = 0; 
     let mixer, walkAction, idleAction,runAction, character;
@@ -151,7 +170,8 @@
         requestAnimationFrame(animate);
         const delta = clock.getDelta();
         const time = clock.getElapsedTime();
-        grassField.update(clock.getElapsedTime());
+        // grassField.update(clock.getElapsedTime());
+        if (grassField) grassField.update(time);
         if (bushField) bushField.update(time);
         if (character && mixer) {
             let isMoving = keys.w || keys.a || keys.s || keys.d;
