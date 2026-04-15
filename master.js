@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import Grass from './grass.js';
 import Foliage from './foliage.js';
 import Water from './water.js'; 
+import MobileControls from './mobile.js';
 
 function lerpAngle(start, end, t) {
     let diff = Math.abs(end - start);
@@ -27,6 +28,7 @@ const d = 10;
 const camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
 const camOffset = new THREE.Vector3(20, 20, 20);
 camera.position.copy(camOffset);
+const joystick = new MobileControls(scene, camera);
 
 scene.add(new THREE.AmbientLight(0xffffff, 1.2));
 const sun = new THREE.DirectionalLight(0xffffff, 1.5);
@@ -222,25 +224,47 @@ function animate() {
     const delta = clock.getDelta();
     const time = clock.getElapsedTime();
     
+    // Update environment shaders
     if (grassField) grassField.update(time);
     if (bushField) bushField.update(time);
     if (waterField) waterField.update(time);
 
     if (character && mixer) {
-        let isMoving = keys.w || keys.a || keys.s || keys.d;
-        let isRunning = isMoving && keys.shift;
+        // 1. Check Inputs (Keyboard vs Mobile)
+        let isMovingKeys = keys.w || keys.a || keys.s || keys.d;
+        
+        // Safety check to ensure joystick exists and is being actively pushed
+        let isMovingMobile = typeof joystick !== 'undefined' && joystick.isMoving && 
+                             (Math.abs(joystick.direction.x) > 0.05 || Math.abs(joystick.direction.y) > 0.05);
+        
+        let isMoving = isMovingKeys || isMovingMobile;
 
+        // 2. Determine Speed / Running State
+        let joystickStrength = typeof joystick !== 'undefined' ? Math.sqrt(joystick.direction.x ** 2 + joystick.direction.y ** 2) : 0;
+        let isRunning = (isMovingKeys && keys.shift) || (isMovingMobile && joystickStrength > 0.8);
+        
         const speed = isRunning ? 0.3 : 0.15;
+
+        // 3. Movement and Rotation
         if (isMoving) {
-            if (keys.w) { character.position.z -= speed; targetRotation = Math.PI; }
-            if (keys.s) { character.position.z += speed; targetRotation = 0; }
-            if (keys.a) { character.position.x -= speed; targetRotation = -Math.PI * 0.5; }
-            if (keys.d) { character.position.x += speed; targetRotation = Math.PI * 0.5; }
-            if (keys.w && keys.d) targetRotation = Math.PI * 0.75;
-            if (keys.w && keys.a) targetRotation = -Math.PI * 0.75;
-            if (keys.s && keys.d) targetRotation = Math.PI * 0.25;
-            if (keys.s && keys.a) targetRotation = -Math.PI * 0.25;
+            if (isMovingMobile) {
+                // --- MOBILE ---
+                character.position.x += joystick.direction.x * speed;
+                character.position.z += joystick.direction.y * speed;
+                targetRotation = Math.atan2(joystick.direction.x, joystick.direction.y);
+            } else {
+                // --- KEYBOARD ---
+                if (keys.w) { character.position.z -= speed; targetRotation = Math.PI; }
+                if (keys.s) { character.position.z += speed; targetRotation = 0; }
+                if (keys.a) { character.position.x -= speed; targetRotation = -Math.PI * 0.5; }
+                if (keys.d) { character.position.x += speed; targetRotation = Math.PI * 0.5; }
+                if (keys.w && keys.d) targetRotation = Math.PI * 0.75;
+                if (keys.w && keys.a) targetRotation = -Math.PI * 0.75;
+                if (keys.s && keys.d) targetRotation = Math.PI * 0.25;
+                if (keys.s && keys.a) targetRotation = -Math.PI * 0.25;
+            }
             
+            // --- ANIMATION BLENDING: RUN OR WALK ---
             if (isRunning) {
                 if (runAction && !runAction.isRunning()) {
                     if (walkAction) walkAction.fadeOut(0.2);
@@ -255,6 +279,7 @@ function animate() {
                 }
             }
         } else {
+            // --- ANIMATION BLENDING: IDLE ---
             if (idleAction && !idleAction.isRunning()) {
                 if (walkAction) walkAction.fadeOut(0.2);
                 if (runAction) runAction.fadeOut(0.2);
@@ -262,9 +287,11 @@ function animate() {
             }
         }
         
+        // Smoothly lerp character rotation
         character.rotation.y = lerpAngle(character.rotation.y, targetRotation, 0.1);
         mixer.update(delta);
 
+        // 4. Ground Collision (Reading the heightmap data)
         if (window.terrainData) {
             const normalizedX = (character.position.x / 150) + 0.5;
             const normalizedZ = (character.position.z / 150) + 0.5;
@@ -273,13 +300,13 @@ function animate() {
             const py = Math.max(0, Math.min(window.terrainData.imgSize - 1, Math.floor(normalizedZ * window.terrainData.imgSize)));
             
             const pixelIndex = (py * window.terrainData.imgSize + px) * 4;
+            const brightness = window.terrainData.imgData[pixelIndex];
             
-            // RED CHANNEL (Index 0) controls character Y height so he walks on the hills
-            const heightValue = window.terrainData.imgData[pixelIndex]; 
-            
-            character.position.y = (heightValue / 255) * 15 - 7.5;
+            // Adjust the Y position based on displacement mapping math
+            character.position.y = (brightness / 255) * 15 - 7.5;
         }
 
+        // 5. Camera Follow
         camera.position.set(
             character.position.x + camOffset.x,
             character.position.y + camOffset.y,
@@ -290,6 +317,7 @@ function animate() {
     
     renderer.render(scene, camera);
 }
+
 animate();
 
 window.addEventListener('resize', () => {
