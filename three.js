@@ -39,19 +39,86 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
-// --- 2. LOADERS ---
+// --- 2. LOADERS & TEXTURES ---
 const texLoader = new THREE.TextureLoader();
 const loader = new GLTFLoader(); 
 
-// --- 3. THE DISPLACEMENT FLOOR ---
+// Load maps
 const heightTex = texLoader.load('ground_height.jpg');
+const splatMap = texLoader.load('ground_texture.jpg'); 
 
-const floorMaterial = new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#5a524b'), 
-    displacementMap: heightTex,
-    displacementScale: 15,  
-    displacementBias: -7.5, 
-    roughness: 0.9,
+// Load tiling textures
+const grassTex = texLoader.load('grass_texture.jpg');
+const dirtTex = texLoader.load('dirt_texture.jpg');
+
+// Ensure textures repeat properly
+grassTex.wrapS = grassTex.wrapT = THREE.RepeatWrapping;
+dirtTex.wrapS = dirtTex.wrapT = THREE.RepeatWrapping;
+
+// Optionally adjust color spaces for better look
+grassTex.colorSpace = THREE.SRGBColorSpace;
+dirtTex.colorSpace = THREE.SRGBColorSpace;
+
+// --- 3. THE SPLAT MAP FLOOR ---
+const floorMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+        tSplat: { value: splatMap },
+        tGrass: { value: grassTex },
+        tDirt: { value: dirtTex },
+        uRepeat: { value: 30.0 }, // Adjust this to make textures larger/smaller
+        uDepthMap: { value: heightTex },
+        uDisplacementScale: { value: 15.0 },
+        uDisplacementBias: { value: -7.5 }
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        uniform sampler2D uDepthMap;
+        uniform float uDisplacementScale;
+        uniform float uDisplacementBias;
+
+        void main() {
+            vUv = uv;
+            vNormal = normal; // Pass normal to fragment for basic lighting
+            
+            // Read the heightmap to displace the floor vertices
+            float displacement = texture2D(uDepthMap, uv).r;
+            vec3 newPosition = position + normal * (displacement * uDisplacementScale + uDisplacementBias);
+            
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
+        }
+    `,
+    fragmentShader: `
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        uniform sampler2D tSplat;
+        uniform sampler2D tGrass;
+        uniform sampler2D tDirt;
+        uniform float uRepeat;
+
+        void main() {
+            // 1. Read the painted mask
+            vec3 mask = texture2D(tSplat, vUv).rgb;
+            
+            // 2. Read the tiling textures
+            vec3 grass = texture2D(tGrass, vUv * uRepeat).rgb;
+            vec3 dirt = texture2D(tDirt, vUv * uRepeat).rgb;
+            
+            // 3. Base color for black areas (matches your old bgColor roughly)
+            vec3 base = vec3(0.35, 0.32, 0.29); 
+
+            // 4. Mix them based on the mask channels
+            vec3 finalColor = mix(base, grass, mask.r);
+            finalColor = mix(finalColor, dirt, mask.g);
+
+            // 5. Very basic fake directional lighting to give it some volume
+            float light = dot(vNormal, normalize(vec3(1.0, 2.0, 1.0))) * 0.5 + 0.5;
+            finalColor *= light;
+
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    `,
+    wireframe: false
 });
 
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(150, 150, 128, 128), floorMaterial);
@@ -59,7 +126,6 @@ floor.rotation.x = -Math.PI * 0.5;
 scene.add(floor);
 
 // --- 4. THE CORAL REEF WATER ---
-// We pass heightTex into the water so it knows where the deep parts are!
 let waterField = new Water(scene, 150, heightTex); 
 
 // --- 5. THE SMART BOUNCERS (MAP DATA, GRASS, TREES) ---
@@ -83,7 +149,7 @@ mapImg.onload = () => {
     
     window.terrainData = { imgData, imgSize };
 
-    grassField = new Grass(scene, 9000, 150, imgData, imgSize);
+    grassField = new Grass(scene, 10000, 150, imgData, imgSize);
 
     texLoader.load('leaf.png', (leafTex) => {
         texLoader.load('matcap.png', (matcapTex) => {
@@ -221,6 +287,7 @@ function animate() {
         character.rotation.y = lerpAngle(character.rotation.y, targetRotation, 0.1);
         mixer.update(delta);
 
+        // Keep character on the ground
         if (window.terrainData) {
             const normalizedX = (character.position.x / 150) + 0.5;
             const normalizedZ = (character.position.z / 150) + 0.5;
