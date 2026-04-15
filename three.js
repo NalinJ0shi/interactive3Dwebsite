@@ -43,10 +43,10 @@ const texLoader = new THREE.TextureLoader();
 const loader = new GLTFLoader(); 
 
 // Load Master Map and Splat Map
-const masterMap = texLoader.load('master_map.png');
+const masterMap = texLoader.load('master_map1.png');
 const splatMap = texLoader.load('images/ground_texture.jpg'); 
 
-const grassTex = texLoader.load('images/grass_texture.jpg');
+const grassTex = texLoader.load('images/grass_texture2.jpg');
 const dirtTex = texLoader.load('images/dirt_texture.jpg');
 
 grassTex.wrapS = grassTex.wrapT = THREE.RepeatWrapping;
@@ -123,7 +123,7 @@ const treeTrunks = [];
 window.terrainData = null; 
 
 const mapImg = new Image();
-mapImg.src = 'master_map.png'; // Load the packed PNG into RAM
+mapImg.src = 'master_map1.png'; // Load the packed PNG into RAM
 mapImg.onload = () => {
     const canvas = document.createElement('canvas');
     canvas.width = mapImg.width;
