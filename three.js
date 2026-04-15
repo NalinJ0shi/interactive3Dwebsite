@@ -4,7 +4,6 @@ import Grass from './grass.js';
 import Foliage from './foliage.js';
 import Water from './water.js'; 
 
-// --- HELPER FUNCTION ---
 function lerpAngle(start, end, t) {
     let diff = Math.abs(end - start);
     if (diff > Math.PI) {
@@ -43,46 +42,42 @@ document.body.appendChild(renderer.domElement);
 const texLoader = new THREE.TextureLoader();
 const loader = new GLTFLoader(); 
 
-// Load maps
-const heightTex = texLoader.load('ground_height.jpg');
-const splatMap = texLoader.load('ground_texture.jpg'); 
+// Load Master Map and Splat Map
+const masterMap = texLoader.load('master_map.png');
+const splatMap = texLoader.load('images/ground_texture.jpg'); 
 
-// Load tiling textures
-const grassTex = texLoader.load('grass_texture.jpg');
-const dirtTex = texLoader.load('dirt_texture.jpg');
+const grassTex = texLoader.load('images/grass_texture.jpg');
+const dirtTex = texLoader.load('images/dirt_texture.jpg');
 
-// Ensure textures repeat properly
 grassTex.wrapS = grassTex.wrapT = THREE.RepeatWrapping;
 dirtTex.wrapS = dirtTex.wrapT = THREE.RepeatWrapping;
-
-// Optionally adjust color spaces for better look
 grassTex.colorSpace = THREE.SRGBColorSpace;
 dirtTex.colorSpace = THREE.SRGBColorSpace;
 
-// --- 3. THE SPLAT MAP FLOOR ---
+// --- 3. THE FLOOR SHADER ---
 const floorMaterial = new THREE.ShaderMaterial({
     uniforms: {
         tSplat: { value: splatMap },
         tGrass: { value: grassTex },
         tDirt: { value: dirtTex },
-        uRepeat: { value: 30.0 }, // Adjust this to make textures larger/smaller
-        uDepthMap: { value: heightTex },
+        uRepeat: { value: 30.0 }, 
+        uMasterMap: { value: masterMap }, // The packed texture
         uDisplacementScale: { value: 15.0 },
         uDisplacementBias: { value: -7.5 }
     },
     vertexShader: `
         varying vec2 vUv;
         varying vec3 vNormal;
-        uniform sampler2D uDepthMap;
+        uniform sampler2D uMasterMap;
         uniform float uDisplacementScale;
         uniform float uDisplacementBias;
 
         void main() {
             vUv = uv;
-            vNormal = normal; // Pass normal to fragment for basic lighting
+            vNormal = normal; 
             
-            // Read the heightmap to displace the floor vertices
-            float displacement = texture2D(uDepthMap, uv).r;
+            // Look at RED (.r) channel for height displacement
+            float displacement = texture2D(uMasterMap, uv).r;
             vec3 newPosition = position + normal * (displacement * uDisplacementScale + uDisplacementBias);
             
             gl_Position = projectionMatrix * modelViewMatrix * vec4(newPosition, 1.0);
@@ -97,46 +92,38 @@ const floorMaterial = new THREE.ShaderMaterial({
         uniform float uRepeat;
 
         void main() {
-            // 1. Read the painted mask
             vec3 mask = texture2D(tSplat, vUv).rgb;
-            
-            // 2. Read the tiling textures
             vec3 grass = texture2D(tGrass, vUv * uRepeat).rgb;
             vec3 dirt = texture2D(tDirt, vUv * uRepeat).rgb;
             
-            // 3. Base color for black areas (matches your old bgColor roughly)
             vec3 base = vec3(0.35, 0.32, 0.29); 
 
-            // 4. Mix them based on the mask channels
             vec3 finalColor = mix(base, grass, mask.r);
             finalColor = mix(finalColor, dirt, mask.g);
 
-            // 5. Very basic fake directional lighting to give it some volume
             float light = dot(vNormal, normalize(vec3(1.0, 2.0, 1.0))) * 0.5 + 0.5;
             finalColor *= light;
 
             gl_FragColor = vec4(finalColor, 1.0);
         }
-    `,
-    wireframe: false
+    `
 });
 
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(150, 150, 128, 128), floorMaterial);
 floor.rotation.x = -Math.PI * 0.5;
 scene.add(floor);
 
-// --- 4. THE CORAL REEF WATER ---
-let waterField = new Water(scene, 150, heightTex); 
+// --- 4. WATER ---
+// Water already uses `.r` internally for depth, so we just pass the master map!
+let waterField = new Water(scene, 150, masterMap); 
 
-// --- 5. THE SMART BOUNCERS (MAP DATA, GRASS, TREES) ---
-let grassField;
-let bushField;
+// --- 5. THE DATA READER ---
+let grassField, bushField;
 const treeTrunks = [];
-
 window.terrainData = null; 
 
 const mapImg = new Image();
-mapImg.src = 'ground_height.jpg'; 
+mapImg.src = 'master_map.png'; // Load the packed PNG into RAM
 mapImg.onload = () => {
     const canvas = document.createElement('canvas');
     canvas.width = mapImg.width;
@@ -149,13 +136,13 @@ mapImg.onload = () => {
     
     window.terrainData = { imgData, imgSize };
 
+    // Pass the image data to Grass (it knows to look at the Green channel)
     grassField = new Grass(scene, 10000, 150, imgData, imgSize);
 
-    texLoader.load('leaf.png', (leafTex) => {
-        texLoader.load('matcap.png', (matcapTex) => {
+    texLoader.load('images/leaf.png', (leafTex) => {
+        texLoader.load('images/matcap.png', (matcapTex) => {
             matcapTex.colorSpace = THREE.SRGBColorSpace;
-
-            loader.load('tree2.glb', (gltf) => {
+            loader.load('models/tree1.glb', (gltf) => {
                 const treeModel = gltf.scene;
 
                 let plantedTrees = 0;
@@ -173,9 +160,10 @@ mapImg.onload = () => {
                     const pixelY = Math.floor(normalizedZ * imgSize);
                     
                     const pixelIndex = (pixelY * imgSize + pixelX) * 4;
-                    const brightness = imgData[pixelIndex];
-
-                    if (brightness < 128) continue; 
+                    
+                    // Let's spawn trees where there is grass (Green channel)
+                    const treeDensity = imgData[pixelIndex + 1]; 
+                    if (treeDensity < 128) continue; 
 
                     const tree = treeModel.clone();
                     const s = 3 + Math.random() * 3;
@@ -199,7 +187,7 @@ mapImg.onload = () => {
 let targetRotation = 0;
 let mixer, walkAction, idleAction, runAction, character;
 
-loader.load('Man+anim3.glb', (gltf) => {
+loader.load('models/character.glb', (gltf) => {
     character = gltf.scene;
     scene.add(character);
     mixer = new THREE.AnimationMixer(character);
@@ -208,29 +196,19 @@ loader.load('Man+anim3.glb', (gltf) => {
     const idleClip = THREE.AnimationClip.findByName(gltf.animations, 'Man_Idle');
     const runClip = THREE.AnimationClip.findByName(gltf.animations, 'Man_Run');
     
-    if (walkClip) {
-        walkAction = mixer.clipAction(walkClip);
-        walkAction.setLoop(THREE.LoopRepeat);
-    }
-    if (runClip) {
-        runAction = mixer.clipAction(runClip);
-        runAction.setLoop(THREE.LoopRepeat);
-    }
+    if (walkClip) walkAction = mixer.clipAction(walkClip).setLoop(THREE.LoopRepeat);
+    if (runClip) runAction = mixer.clipAction(runClip).setLoop(THREE.LoopRepeat);
     if (idleClip) {
-        idleAction = mixer.clipAction(idleClip);
-        idleAction.setLoop(THREE.LoopRepeat);
+        idleAction = mixer.clipAction(idleClip).setLoop(THREE.LoopRepeat);
         idleAction.play();
     }
 });
 
-// --- 7. CONTROLS ---
 const keys = { w: false, a: false, s: false, d: false, shift: false };
-
 window.addEventListener('keydown', (e) => {
     if(e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = true;
     if(e.key === 'Shift') keys.shift = true;
 });
-
 window.addEventListener('keyup', (e) => {
     if(e.key.toLowerCase() in keys) keys[e.key.toLowerCase()] = false;
     if(e.key === 'Shift') keys.shift = false;
@@ -287,7 +265,6 @@ function animate() {
         character.rotation.y = lerpAngle(character.rotation.y, targetRotation, 0.1);
         mixer.update(delta);
 
-        // Keep character on the ground
         if (window.terrainData) {
             const normalizedX = (character.position.x / 150) + 0.5;
             const normalizedZ = (character.position.z / 150) + 0.5;
@@ -296,9 +273,11 @@ function animate() {
             const py = Math.max(0, Math.min(window.terrainData.imgSize - 1, Math.floor(normalizedZ * window.terrainData.imgSize)));
             
             const pixelIndex = (py * window.terrainData.imgSize + px) * 4;
-            const brightness = window.terrainData.imgData[pixelIndex];
             
-            character.position.y = (brightness / 255) * 15 - 7.5;
+            // RED CHANNEL (Index 0) controls character Y height so he walks on the hills
+            const heightValue = window.terrainData.imgData[pixelIndex]; 
+            
+            character.position.y = (heightValue / 255) * 15 - 7.5;
         }
 
         camera.position.set(
@@ -313,7 +292,6 @@ function animate() {
 }
 animate();
 
-// --- 9. WINDOW RESIZE ---
 window.addEventListener('resize', () => {
     const aspect = window.innerWidth / window.innerHeight;
     camera.left = -d * aspect; camera.right = d * aspect;

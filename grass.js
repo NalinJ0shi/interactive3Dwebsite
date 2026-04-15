@@ -1,13 +1,12 @@
 import * as THREE from 'three';
 
 export default class Grass {
-    // We now accept the ghost map data!
     constructor(scene, count = 20000, size = 150, imgData = null, imgSize = 512) {
         this.scene = scene;
         this.count = count;
         this.size = size;
 
-        // 1. CREATE THE "X" SHAPE GEOMETRY (Unchanged)
+        // 1. CREATE THE "X" SHAPE GEOMETRY
         const planeGeom = new THREE.PlaneGeometry(0.25, 0.8, 1, 4);
         planeGeom.translate(0, 0.4, 0); 
 
@@ -25,7 +24,7 @@ export default class Grass {
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
 
-        // 2. THE MATERIAL (Unchanged)
+        // 2. THE MATERIAL
         this.material = new THREE.ShaderMaterial({
             uniforms: {
                 uTime: { value: 0 },
@@ -59,41 +58,38 @@ export default class Grass {
             side: THREE.DoubleSide
         });
 
-        // 3. THE SMART LOOP (Reads the Map!)
+        // 3. THE SMART LOOP (Reads the GREEN Channel of Master Map)
         this.mesh = new THREE.InstancedMesh(geometry, this.material, this.count);
         const dummy = new THREE.Object3D();
         
         let placedGrass = 0;
         let attempts = 0;
-        const maxAttempts = this.count * 10; // Prevent freezing if map is entirely black
+        const maxAttempts = this.count * 10; 
 
         while (placedGrass < this.count && attempts < maxAttempts) {
             attempts++;
 
-            // Pick a random spot in the world
             const randomX = (Math.random() - 0.5) * this.size;
             const randomZ = (Math.random() - 0.5) * this.size;
 
-            // --- THE MASK CHECK ---
             if (imgData) {
-                // Convert 3D world position to 2D image pixel
                 const normalizedX = (randomX / this.size) + 0.5;
                 const normalizedZ = (randomZ / this.size) + 0.5;
 
                 const pixelX = Math.floor(normalizedX * imgSize);
                 const pixelY = Math.floor(normalizedZ * imgSize);
 
-                // Find this pixel's brightness in the data array
                 const pixelIndex = (pixelY * imgSize + pixelX) * 4;
-                const brightness = imgData[pixelIndex]; // 0 is black, 255 is white
+                
+                // +0 is Red (Height), +1 is Green (Grass), +2 is Blue, +3 is Alpha
+                const grassDensity = imgData[pixelIndex + 1]; 
 
-                // If pixel is mostly black, throw seed in trash and try again!
-                if (brightness < 128) {
+                // If Green channel is dark, skip placing grass here
+                if (grassDensity < 128) {
                     continue; 
                 }
             }
 
-            // If we survived the check (it's white), plant the grass!
             dummy.position.set(randomX, 0, randomZ);
             dummy.rotation.y = Math.random() * Math.PI;
             dummy.scale.setScalar(0.6 + Math.random() * 0.8);
@@ -103,7 +99,7 @@ export default class Grass {
             placedGrass++;
         }
 
-        this.mesh.count = placedGrass; // Tell Three.js exactly how many survived
+        this.mesh.count = placedGrass; 
         this.scene.add(this.mesh);
     }
 
