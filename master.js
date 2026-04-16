@@ -4,6 +4,7 @@ import Grass from './grass.js';
 import Foliage from './foliage.js';
 import Water from './water.js'; 
 import MobileControls from './mobile.js';
+import CameraControls from './camera.js';
 
 function lerpAngle(start, end, t) {
     let diff = Math.abs(end - start);
@@ -50,11 +51,14 @@ const splatMap = texLoader.load('images/ground_texture.jpg');
 
 const grassTex = texLoader.load('images/grass_texture2.jpg');
 const dirtTex = texLoader.load('images/dirt_texture.jpg');
+const sandTex = texLoader.load('images/ghibli_grass_texture.jpg');
 
 grassTex.wrapS = grassTex.wrapT = THREE.RepeatWrapping;
 dirtTex.wrapS = dirtTex.wrapT = THREE.RepeatWrapping;
+sandTex.wrapS = sandTex.wrapT = THREE.RepeatWrapping;
 grassTex.colorSpace = THREE.SRGBColorSpace;
 dirtTex.colorSpace = THREE.SRGBColorSpace;
+sandTex.colorSpace = THREE.SRGBColorSpace;
 
 // --- 3. THE FLOOR SHADER ---
 const floorMaterial = new THREE.ShaderMaterial({
@@ -62,6 +66,7 @@ const floorMaterial = new THREE.ShaderMaterial({
         tSplat: { value: splatMap },
         tGrass: { value: grassTex },
         tDirt: { value: dirtTex },
+        tSand: { value: sandTex },
         uRepeat: { value: 30.0 }, 
         uMasterMap: { value: masterMap }, // The packed texture
         uDisplacementScale: { value: 5.0 },
@@ -91,18 +96,27 @@ const floorMaterial = new THREE.ShaderMaterial({
         uniform sampler2D tSplat;
         uniform sampler2D tGrass;
         uniform sampler2D tDirt;
+        uniform sampler2D tSand;
         uniform float uRepeat;
 
         void main() {
+            // 1. Read our splat map
             vec3 mask = texture2D(tSplat, vUv).rgb;
+            
+            // 2. Read the textures
             vec3 grass = texture2D(tGrass, vUv * uRepeat).rgb;
             vec3 dirt = texture2D(tDirt, vUv * uRepeat).rgb;
+            vec3 sand = texture2D(tSand, vUv * uRepeat).rgb;
             
-            vec3 base = vec3(0.35, 0.32, 0.29); 
+            // 3. Calculate the "Black" area
+            float sandFactor = clamp(1.0 - (mask.r + mask.g), 0.0, 1.0);
 
-            vec3 finalColor = mix(base, grass, mask.r);
-            finalColor = mix(finalColor, dirt, mask.g);
+            // 4. Mix them all together
+            vec3 finalColor = sand * sandFactor;
+            finalColor += grass * mask.r;
+            finalColor += dirt * mask.g;
 
+            // 5. Apply lighting
             float light = dot(vNormal, normalize(vec3(1.0, 2.0, 1.0))) * 0.5 + 0.5;
             finalColor *= light;
 
@@ -188,10 +202,12 @@ mapImg.onload = () => {
 // --- 6. LOAD CHARACTER & ANIMATIONS ---
 let targetRotation = 0;
 let mixer, walkAction, idleAction, runAction, character;
+let camControls;
 
 loader.load('models/character.glb', (gltf) => {
     character = gltf.scene;
     scene.add(character);
+    camControls = new CameraControls(camera, character);
     mixer = new THREE.AnimationMixer(character);
 
     const walkClip = THREE.AnimationClip.findByName(gltf.animations, 'Man_Walk');
@@ -307,12 +323,9 @@ function animate() {
         }
 
         // 5. Camera Follow
-        camera.position.set(
-            character.position.x + camOffset.x,
-            character.position.y + camOffset.y,
-            character.position.z + camOffset.z
-        );
-        camera.lookAt(character.position);
+        if (camControls){
+            camControls.update(isMoving);
+        }
     }
     
     renderer.render(scene, camera);

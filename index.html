@@ -10,7 +10,18 @@
     </style>
 </head>
 <body>
-
+<style>
+    body { margin: 0; overflow: hidden; background: #ff9d4d; }
+    
+    /* Add this! */
+    canvas { 
+        display: block; 
+        cursor: grab; 
+    }
+    canvas:active { 
+        cursor: grabbing; 
+    }
+</style>
 <script type="importmap">
     {
         "imports": {
