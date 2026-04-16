@@ -45,7 +45,7 @@ const texLoader = new THREE.TextureLoader();
 const loader = new GLTFLoader(); 
 
 // Load Master Map and Splat Map
-const masterMap = texLoader.load('master_map1.png');
+const masterMap = texLoader.load('master_map3.png');
 const splatMap = texLoader.load('images/ground_texture.jpg'); 
 
 const grassTex = texLoader.load('images/grass_texture2.jpg');
@@ -64,8 +64,8 @@ const floorMaterial = new THREE.ShaderMaterial({
         tDirt: { value: dirtTex },
         uRepeat: { value: 30.0 }, 
         uMasterMap: { value: masterMap }, // The packed texture
-        uDisplacementScale: { value: 15.0 },
-        uDisplacementBias: { value: -7.5 }
+        uDisplacementScale: { value: 5.0 },
+        uDisplacementBias: { value: -3.0 }
     },
     vertexShader: `
         varying vec2 vUv;
@@ -125,7 +125,7 @@ const treeTrunks = [];
 window.terrainData = null; 
 
 const mapImg = new Image();
-mapImg.src = 'master_map1.png'; // Load the packed PNG into RAM
+mapImg.src = 'master_map3.png'; // Load the packed PNG into RAM
 mapImg.onload = () => {
     const canvas = document.createElement('canvas');
     canvas.width = mapImg.width;
@@ -303,7 +303,7 @@ function animate() {
             const brightness = window.terrainData.imgData[pixelIndex];
             
             // Adjust the Y position based on displacement mapping math
-            character.position.y = (brightness / 255) * 15 - 7.5;
+            character.position.y = (brightness / 255) * 5 - 3;
         }
 
         // 5. Camera Follow
